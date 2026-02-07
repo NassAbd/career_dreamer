@@ -1,0 +1,5 @@
+polars
+streamlit
+fsspec
+huggingface_hub
+pyarrow
