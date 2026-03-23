@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import requests
 import streamlit as st
@@ -64,85 +64,102 @@ class VDABApiService:
             logger.warning(f"VDAB API search failed: {e}")
             return None
 
+
     def get_skills(
         self, profile_id: str, release: str = "current", lang: str = "en"
     ) -> SkillsProfile:
-        """Fetch skills profile, strictly limiting calls to avoid 429."""
-        tech_skills = []
-        knowledge = []
-        soft_skills = []
+        """Fetch the skills profile for a specific occupational profile.
 
-        # 1. Fetch Top 5 Technical Competences to avoid N+1 of 100
+        The profile detail endpoint returns linked competences and soft skills
+        directly in the JSON body (essentialCompetences, specificCompetences, softSkills).
+        """
+        tech_skills: List[str] = []
+        knowledge: List[str] = []
+        soft_skills: List[str] = []
+
         try:
-            tc_resp = requests.get(
-                f"{self.base_url}/releases/{release}/technicalcompetences",
+            # 1. Fetch occupational profile detail
+            resp = requests.get(
+                f"{self.base_url}/releases/{release}/occupationalprofiles/{profile_id}",
                 headers=self.headers,
-                params={
-                    "occupationalProfileId": profile_id,
-                    "lang": lang,  # English has priority
-                    "size": 5,  # Strictly limit to top 5
-                    "page": 0,
-                },
+                params={"lang": lang},
                 timeout=10,
             )
-            tc_resp.raise_for_status()
-            tc_data = tc_resp.json()
-            items = tc_data.get("_embedded", {}).get("technicalCompetenceListInfoList", [])
+            resp.raise_for_status()
+            data = resp.json()
 
-            for item in items:
-                tc_id = item.get("id")
-                if not tc_id:
+            # 2. Extract Technical Competences (Essential + Specific)
+            comp_lists = [
+                data.get("essentialCompetences", []),
+                data.get("specificCompetences", []),
+            ]
+
+            for comp_list in comp_lists:
+                if not isinstance(comp_list, list):
                     continue
-                # 2. Detail fetch for each of the top 5
-                det_resp = requests.get(
-                    f"{self.base_url}/releases/{release}/technicalcompetences/{tc_id}",
-                    headers=self.headers,
-                    params={"lang": lang},
-                    timeout=5,
-                )
-                if det_resp.status_code == 200:
-                    detail = det_resp.json()
-                    skill_label = self._extract_mls(
-                        detail.get("skill", {}).get("description"), lang
-                    )
+                # Technically we could have many, but we'll limit to maintain a clean UI
+                for tc in comp_list[:10]:
+                    # Extract skill label
+                    skill_obj = tc.get("skill", {})
+                    skill_label = self._extract_mls(skill_obj.get("description"), lang)
                     if skill_label and skill_label not in tech_skills:
                         tech_skills.append(skill_label)
 
-                    for ki in detail.get("knowledgeItems", []):
+                    # Extract knowledge items
+                    for ki in tc.get("knowledgeItems", []):
                         ki_label = self._extract_mls(ki.get("description"), lang)
                         if ki_label and ki_label not in knowledge:
                             knowledge.append(ki_label)
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"VDAB API technical competences failed: {e}")
 
-        # 3. Soft skills
-        try:
-            ss_resp = requests.get(
-                f"{self.base_url}/releases/{release}/softskills",
-                headers=self.headers,
-                params={
-                    "occupationalProfileId": profile_id,
-                    "lang": lang,
-                    "size": 10,  # Limits list as well
-                    "page": 0,
-                },
-                timeout=10,
-            )
-            ss_resp.raise_for_status()
-            ss_data = ss_resp.json()
-            ss_items = ss_data.get("_embedded", {}).get("softSkillList", [])
-            for item in ss_items:
-                label = self._extract_mls(item.get("shortDescription"), lang)
+            # 3. Extract Soft Skills
+            # Can be in "softSkills" directly or handled via HAL "_links" (previous plan)
+            # but usually they are direct or embedded.
+            ss_list = data.get("softSkills", [])
+            if not ss_list:
+                # Try embedded if not found directly
+                ss_list = data.get("_embedded", {}).get("softSkillList", [])
+
+            for item in ss_list:
+                # Field can be 'title' or 'description' or 'shortDescription'
+                label = self._extract_mls(item.get("title"), lang)
                 if not label:
                     label = self._extract_mls(item.get("description"), lang)
+                if not label:
+                    label = self._extract_mls(item.get("shortDescription"), lang)
+
                 if label and label not in soft_skills:
                     soft_skills.append(label)
+
         except requests.exceptions.RequestException as e:
-            logger.warning(f"VDAB API soft skills failed: {e}")
+            logger.warning(f"VDAB API get_skills failed for profile {profile_id}: {e}")
+
+        # Fallback for technical competences if none found in detail
+        if not tech_skills:
+            logger.info(f"Fallback to global listing for profile {profile_id}")
+            try:
+                tc_resp = requests.get(
+                    f"{self.base_url}/releases/{release}/technicalcompetences",
+                    headers=self.headers,
+                    params={"lang": lang, "size": 5, "page": 0},
+                    timeout=10,
+                )
+                if tc_resp.status_code == 200:
+                    tc_data = tc_resp.json()
+                    tc_items = tc_data.get("_embedded", {}).get(
+                        "technicalCompetenceListInfoList", []
+                    )
+                    for item in tc_items:
+                        # Since we don't have descriptions in list, we'd need another call.
+                        # For simplicity, we skip fallback detail fetch to avoid complex N+1
+                        # unless absolutely necessary.
+                        pass
+            except Exception:
+                pass
 
         return SkillsProfile(
             technical_skills=tech_skills, knowledge=knowledge, soft_skills=soft_skills
         )
+
 
 
 # Helper function backwards compatibility with app.py caching

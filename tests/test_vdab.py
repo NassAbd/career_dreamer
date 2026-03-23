@@ -43,42 +43,34 @@ def test_vdab_search_returns_profile_schema(mock_api):
     assert profile.title == "Data scientist"
 
 
-def test_vdab_get_skills_profile_limits_api_calls(mock_api):
-    # Setup mock to return a limited list for technical competences
-    # thus preventing 429
+def test_vdab_get_skills_one_call(mock_api):
+    """Test that get_skills handles embedded competences in profile response."""
+
+    base = "https://api.vdab.be/services/opendata/competent/v2"
+    profile_url = f"{base}/releases/3.25/occupationalprofiles/123"
+
     def mock_get_side_effect(url, *args, **kwargs):
         resp = MagicMock()
         resp.status_code = 200
-        if "/technicalcompetences/" in url:
-            # Detail call
+
+        if url == profile_url:
             resp.json.return_value = {
-                "skill": {"description": {"en": "Machine Learning", "nl": "Machine Learning"}},
-                "knowledgeItems": [{"description": {"en": "Python", "nl": "Python"}}],
-            }
-        elif "/technicalcompetences" in url:
-            # List call
-            resp.json.return_value = {
-                "_embedded": {
-                    "technicalCompetenceListInfoList": [
-                        {"id": "tc1"},
-                        {"id": "tc2"},  # Only 2 items returned by API (since we pass size=5)
-                    ]
-                }
-            }
-        elif "/softskills" in url:
-            # List call
-            resp.json.return_value = {
-                "_embedded": {
-                    "softSkillList": [{"shortDescription": {"en": "Teamwork", "nl": "Teamwork"}}]
-                }
+                "id": "123",
+                "essentialCompetences": [
+                    {
+                        "skill": {"description": {"en": "Machine Learning"}},
+                        "knowledgeItems": [{"description": {"en": "Python"}}],
+                    }
+                ],
+                "softSkills": [
+                    {"title": {"en": "Teamwork"}}
+                ],
             }
         return resp
 
     mock_api.side_effect = mock_get_side_effect
 
     service = VDABApiService(api_key="dummy")
-
-    # Contract: get_skills returns SkillsProfile schema
     skills = service.get_skills("123", "3.25")
 
     assert isinstance(skills, SkillsProfile)
@@ -86,6 +78,49 @@ def test_vdab_get_skills_profile_limits_api_calls(mock_api):
     assert "Python" in skills.knowledge
     assert "Teamwork" in skills.soft_skills
 
-    # Important validation to avoid 429
-    # 1 for tech list, 2 for tech details, 1 for softskills list = 4 calls total.
-    assert mock_api.call_count == 4
+    # Only 1 call to profile detail should be made!
+    assert mock_api.call_count == 1
+
+
+def test_vdab_different_profiles_produce_different_skills(mock_api):
+    """Two distinct profiles must yield different skill sets for a gap to exist."""
+
+    def mock_get_side_effect(url, *args, **kwargs):
+        resp = MagicMock()
+        resp.status_code = 200
+
+        if "/occupationalprofiles/profile_A" in url:
+            resp.json.return_value = {
+                "id": "profile_A",
+                "essentialCompetences": [
+                    {"skill": {"description": {"en": "Shared Skill"}}}
+                ],
+                "softSkills": [{"title": {"en": "Leadership"}}],
+            }
+        elif "/occupationalprofiles/profile_B" in url:
+            resp.json.return_value = {
+                "id": "profile_B",
+                "essentialCompetences": [
+                    {"skill": {"description": {"en": "Shared Skill"}}},
+                    {"skill": {"description": {"en": "New Skill"}}},
+                ],
+                "softSkills": [
+                    {"title": {"en": "Leadership"}},
+                    {"title": {"en": "Creativity"}},
+                ],
+            }
+        return resp
+
+    mock_api.side_effect = mock_get_side_effect
+
+    service = VDABApiService(api_key="dummy")
+
+    skills_a = service.get_skills("profile_A", "current")
+    skills_b = service.get_skills("profile_B", "current")
+
+    # B has more skills than A
+    assert "New Skill" not in skills_a.technical_skills
+    assert "New Skill" in skills_b.technical_skills
+    assert "Creativity" not in skills_a.soft_skills
+    assert "Creativity" in skills_b.soft_skills
+
