@@ -20,15 +20,15 @@ The career transition data comes from the [JobHop dataset](https://huggingface.c
     cd career_dreamer
     ```
 
-2.  **Install the dependencies:**
-    Make sure you have Python installed. Then, install the required packages using `pip`:
+2.  **Install/Sync dependencies:**
+    This project uses `uv` for environment management and dependency isolation (Zero-Global).
     ```bash
-    pip install -r requirements.txt
+    uv sync
     ```
 
 3.  **Run the Streamlit app:**
     ```bash
-    streamlit run app.py
+    uv run streamlit run app.py
     ```
 
     The application will then be available in your web browser, usually at `http://localhost:8501`.
@@ -37,4 +37,20 @@ The career transition data comes from the [JobHop dataset](https://huggingface.c
 
 *   **Streamlit:** For building the interactive web application.
 *   **Polars:** For high-performance data manipulation.
-*   **Python**
+*   **uv:** For project management and environment isolation.
+*   **Ruff/Pytest:** For linting and TDD.
+
+## Engineering Guidelines
+
+This project follows a "Zero-Global" philosophy. Use `uv` for all operations.
+
+1. **Linting**: Ensure code passes ruff before committing:
+   ```bash
+   uv run ruff check .
+   ```
+2. **Testing**: Run tests regularly:
+   ```bash
+   uv run pytest
+   ```
+3. **Execution**: Always wrap commands in `uv run`.
+4. **Sanity Check**: Run `./docs/sanity_check.sh` to auditing environment health.
