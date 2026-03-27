@@ -29,9 +29,6 @@ class VDABApiService:
 
     def search_profile(self, job_title: str, lang: str = "en") -> Optional[OccupationalProfileInfo]:
         """Search the VDAB /search endpoint."""
-        # Force Dutch language to be sure to get results
-        search_lang = "nl"
-
         try:
             resp = requests.get(
                 f"{self.base_url}/search",
@@ -39,7 +36,7 @@ class VDABApiService:
                 params={
                     "searchValue": job_title,
                     "entityTypes": "OCCUPATIONAL_PROFILE",
-                    "language": search_lang,
+                    "language": lang,
                     "size": 1,
                     "page": 0,
                 },
@@ -133,29 +130,6 @@ class VDABApiService:
         except requests.exceptions.RequestException as e:
             logger.warning(f"VDAB API get_skills failed for profile {profile_id}: {e}")
 
-        # Fallback for technical competences if none found in detail
-        if not tech_skills:
-            logger.info(f"Fallback to global listing for profile {profile_id}")
-            try:
-                tc_resp = requests.get(
-                    f"{self.base_url}/releases/{release}/technicalcompetences",
-                    headers=self.headers,
-                    params={"lang": lang, "size": 5, "page": 0},
-                    timeout=10,
-                )
-                if tc_resp.status_code == 200:
-                    tc_data = tc_resp.json()
-                    tc_items = tc_data.get("_embedded", {}).get(
-                        "technicalCompetenceListInfoList", []
-                    )
-                    for item in tc_items:
-                        # Since we don't have descriptions in list, we'd need another call.
-                        # For simplicity, we skip fallback detail fetch to avoid complex N+1
-                        # unless absolutely necessary.
-                        pass
-            except Exception:
-                pass
-
         return SkillsProfile(
             technical_skills=tech_skills, knowledge=knowledge, soft_skills=soft_skills
         )
@@ -179,6 +153,8 @@ def get_skills_for_job(job_title: str, lang: str = "en") -> Optional[Dict]:
         return None
 
     skills = service.get_skills(profile.id, profile.release_number, lang)
+    if not skills.technical_skills and not skills.knowledge and not skills.soft_skills:
+        return None
     return skills.model_dump()
 
 
